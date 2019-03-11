@@ -2,37 +2,36 @@
 
 namespace Hhxsv5\LaravelS\Illuminate;
 
-use Illuminate\Support\Facades\Facade;
-use Illuminate\Http\Request as IlluminateRequest;
-use Illuminate\Contracts\Http\Kernel as HttpKernel;
+use Hhxsv5\LaravelS\Illuminate\Cleaners\CleanerInterface;
+use Illuminate\Container\Container;
 use Illuminate\Contracts\Console\Kernel as ConsoleKernel;
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
+use Illuminate\Http\Request as IlluminateRequest;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class Laravel
 {
+    /**@var Container */
     protected $app;
 
-    /**
-     * @var HttpKernel $kernel
-     */
+    /**@var HttpKernel */
     protected $kernel;
 
-    protected static $snapshotKeys = ['config', 'cookie', 'auth', /*'auth.password'*/];
-
-    /**
-     * @var array $snapshots
-     */
+    /**@var array */
     protected $snapshots = [];
 
+    /**@var array */
     protected $conf = [];
 
+    /**@var array */
     protected static $staticBlackList = [
         '/index.php'  => 1,
         '/.htaccess'  => 1,
         '/web.config' => 1,
     ];
 
+    /**@var array */
     private $rawGlobals = [];
 
     public function __construct(array $conf = [])
@@ -94,6 +93,20 @@ class Laravel
             }
         } else {
             $this->app->make(ConsoleKernel::class)->bootstrap();
+        }
+
+        foreach ($this->conf['cleaners'] as $cleanerCls) {
+            $this->app->singleton($cleanerCls, function ($app) use ($cleanerCls) {
+                if (!isset(class_implements($cleanerCls)[CleanerInterface::class])) {
+                    throw new \Exception(sprintf(
+                            '%s must implement the interface %s',
+                            $cleanerCls,
+                            CleanerInterface::class
+                        )
+                    );
+                }
+                return new $cleanerCls();
+            });
         }
     }
 
@@ -223,60 +236,45 @@ class Laravel
         return $response;
     }
 
-    public function reRegisterServiceProvider($providerCls, array $clearFacades = [], $force = false)
+    protected function cleanProviders(array $providers, $force = false)
     {
-        if (class_exists($providerCls, false) || $force) {
-            if ($this->conf['is_lumen']) {
-                $laravelReflect = new \ReflectionObject($this->app);
-                $loadedProviders = $laravelReflect->getProperty('loadedProviders');
-                $loadedProviders->setAccessible(true);
-                $oldLoadedProviders = $loadedProviders->getValue($this->app);
-                unset($oldLoadedProviders[get_class(new $providerCls($this->app))]);
-                $loadedProviders->setValue($this->app, $oldLoadedProviders);
+        if ($this->conf['is_lumen']) {
+            $laravelReflect = new \ReflectionObject($this->app);
+            $loadedProviders = $laravelReflect->getProperty('loadedProviders');
+            $loadedProviders->setAccessible(true);
+            $oldLoadedProviders = $loadedProviders->getValue($this->app);
+        }
+
+        foreach ($providers as $provider) {
+            if ($force || class_exists($provider, false)) {
+                if ($this->conf['is_lumen']) {
+                    unset($oldLoadedProviders[get_class(new $provider($this->app))]);
+                }
+                $this->app->register($provider, [], true);
             }
-            foreach ($clearFacades as $facade) {
-                Facade::clearResolvedInstance($facade);
-            }
-            $this->app->register($providerCls, [], true);
+        }
+
+        if ($this->conf['is_lumen']) {
+            $loadedProviders->setValue($this->app, $oldLoadedProviders);
         }
     }
 
-    public function cleanRequest(IlluminateRequest $request)
+    public function clean()
     {
-        // Clean laravel session
-        if ($request->hasSession()) {
-            $session = $request->getSession();
-            if (method_exists($session, 'clear')) {
-                $session->clear();
-            } elseif (method_exists($session, 'flush')) {
-                $session->flush();
-            }
-            // TODO: clear session for other versions
+        foreach ($this->conf['cleaners'] as $cleanerCls) {
+            /**@var CleanerInterface $cleaner */
+            $cleaner = $this->app->make($cleanerCls);
+            $cleaner->clean($this->app);
         }
 
-        // Re-register auth
-        //$this->reRegisterServiceProvider('\Illuminate\Auth\AuthServiceProvider', ['auth', 'auth.driver']);
-        //$this->reRegisterServiceProvider('\Illuminate\Auth\Passwords\PasswordResetServiceProvider', ['auth.password']);
-
-        // Re-register passport
-        $this->reRegisterServiceProvider('\Laravel\Passport\PassportServiceProvider');
-
-        // Re-register some singleton providers
-        foreach ($this->conf['register_providers'] as $provider) {
-            $this->reRegisterServiceProvider($provider);
-        }
-
-        // Clear request
-        $this->app->forgetInstance('request');
-        Facade::clearResolvedInstance('request');
-
-        //...
+        $this->cleanProviders($this->conf['register_providers']);
     }
 
     public function fireEvent($name, array $params = [])
     {
         $params[] = $this->app;
-        return $this->app->events->dispatch($name, $params);
+        return method_exists($this->app['events'], 'dispatch') ?
+            $this->app['events']->dispatch($name, $params) : $this->app['events']->fire($name, $params);
     }
 
     public function bindRequest(IlluminateRequest $request)
@@ -296,19 +294,9 @@ class Laravel
         return $this->app->make($abstract, $parameters);
     }
 
-    public function resetSession()
-    {
-        if (!empty($this->app['session'])) {
-            $reflection = new \ReflectionObject($this->app['session']);
-            $drivers = $reflection->getProperty('drivers');
-            $drivers->setAccessible(true);
-            $drivers->setValue($this->app['session'], []);
-        }
-    }
-
     public function saveSession()
     {
-        if (!empty($this->app['session'])) {
+        if ($this->app->offsetExists('session')) {
             $this->app['session']->save();
         }
     }

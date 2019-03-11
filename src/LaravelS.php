@@ -44,12 +44,10 @@ class LaravelS extends Server
         ProcessTitleTrait::setProcessTitle insteadof InotifyTrait, TimerTrait, CustomProcessTrait;
         LaravelTrait::initLaravel insteadof TimerTrait, CustomProcessTrait;
     }
-
+    /**@var array */
     protected $laravelConf;
 
-    /**
-     * @var Laravel $laravel
-     */
+    /**@var Laravel */
     protected $laravel;
 
     public function __construct(array $svrConf, array $laravelConf)
@@ -85,12 +83,12 @@ class LaravelS extends Server
 
             $this->swoole->on('Open', function (WebSocketServer $server, SwooleRequest $request) use ($eventHandler) {
                 // Start Laravel's lifetime, then support session ...middleware.
-                $this->laravel->resetSession();
                 $laravelRequest = $this->convertRequest($this->laravel, $request);
                 $this->laravel->bindRequest($laravelRequest);
                 $this->laravel->handleDynamic($laravelRequest);
                 $eventHandler('onOpen', func_get_args());
                 $this->laravel->saveSession();
+                $this->laravel->clean();
             });
         }
     }
@@ -116,21 +114,21 @@ class LaravelS extends Server
         return (new Request($request))->toIlluminateRequest($server, $env);
     }
 
-    public function onRequest(SwooleRequest $request, SwooleResponse $response)
+    public function onRequest(SwooleRequest $swooleRequest, SwooleResponse $swooleResponse)
     {
-        parent::onRequest($request, $response);
         try {
-            $laravelRequest = $this->convertRequest($this->laravel, $request);
+            parent::onRequest($swooleRequest, $swooleResponse);
+            $laravelRequest = $this->convertRequest($this->laravel, $swooleRequest);
             $this->laravel->bindRequest($laravelRequest);
             $this->laravel->fireEvent('laravels.received_request', [$laravelRequest]);
-            $success = $this->handleStaticResource($this->laravel, $laravelRequest, $response);
+            $success = $this->handleStaticResource($this->laravel, $laravelRequest, $swooleResponse);
             if ($success === false) {
-                $this->handleDynamicResource($this->laravel, $laravelRequest, $response);
+                $this->handleDynamicResource($this->laravel, $laravelRequest, $swooleResponse);
             }
         } catch (\Exception $e) {
-            $this->handleException($e, $response);
+            $this->handleException($e, $swooleResponse);
         } catch (\Throwable $e) {
-            $this->handleException($e, $response);
+            $this->handleException($e, $swooleResponse);
         }
     }
 
@@ -155,7 +153,7 @@ class LaravelS extends Server
             $response->status(500);
             $response->end('Oops! An unexpected error occurred: ' . $e->getMessage());
         } catch (\Exception $e) {
-            // Catch: zm_deactivate_swoole: Fatal error: Uncaught exception 'ErrorException' with message 'swoole_http_response::status(): http client#2 is not exist.
+            $this->logException($e);
         }
     }
 
@@ -179,18 +177,19 @@ class LaravelS extends Server
         $laravelResponse = $laravel->handleDynamic($laravelRequest);
         $laravelResponse->headers->set('Server', $this->conf['server'], true);
         $laravel->fireEvent('laravels.generated_response', [$laravelRequest, $laravelResponse]);
-        $laravel->cleanRequest($laravelRequest);
+        $laravel->clean();
         if ($laravelResponse instanceof BinaryFileResponse) {
-            (new StaticResponse($swooleResponse, $laravelResponse))->send($this->conf['enable_gzip']);
+            $response = new StaticResponse($swooleResponse, $laravelResponse);
         } else {
-            (new DynamicResponse($swooleResponse, $laravelResponse))->send($this->conf['enable_gzip']);
+            $response = new DynamicResponse($swooleResponse, $laravelResponse);
         }
+        $response->send($this->conf['enable_gzip']);
+        $response = null;
+        unset($response);
         return true;
     }
 
-    /**
-     * @var OutputStyle $outputStyle
-     */
+    /**@var OutputStyle */
     protected static $outputStyle;
 
     public static function setOutputStyle(OutputStyle $outputStyle)

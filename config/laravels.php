@@ -18,16 +18,13 @@ return [
         'excluded_dirs' => [],
         'log'           => true,
     ],
-    'event_handlers'           => [
-    ],
+    'event_handlers'           => [],
     'websocket'                => [
         'enable' => false,
         //'handler' => XxxWebSocketHandler::class,
     ],
-    'sockets'                  => [
-    ],
-    'processes'                => [
-    ],
+    'sockets'                  => [],
+    'processes'                => [],
     'timer'                    => [
         'enable'        => false,
         'jobs'          => [
@@ -40,11 +37,15 @@ return [
         'pid_file'      => storage_path('laravels-timer.pid'),
         'max_wait_time' => 5,
     ],
-    'events'                   => [
-    ],
-    'swoole_tables'            => [
-    ],
-    'register_providers'       => [
+    'events'                   => [],
+    'swoole_tables'            => [],
+    'register_providers'       => [],
+    'cleaners'                 => [
+        Hhxsv5\LaravelS\Illuminate\Cleaners\SessionCleaner::class,
+        Hhxsv5\LaravelS\Illuminate\Cleaners\AuthCleaner::class,
+        Hhxsv5\LaravelS\Illuminate\Cleaners\JWTCleaner::class,
+        Hhxsv5\LaravelS\Illuminate\Cleaners\RequestCleaner::class,
+        // ...
     ],
     'swoole'                   => [
         'daemonize'          => env('LARAVELS_DAEMONIZE', false),
@@ -53,9 +54,9 @@ return [
         'worker_num'         => function_exists('swoole_cpu_num') ? swoole_cpu_num() * 2 : 8,
         //'task_worker_num'    => function_exists('swoole_cpu_num') ? swoole_cpu_num() * 2 : 8,
         'task_ipc_mode'      => 1,
-        'task_max_request'   => 5000,
+        'task_max_request'   => 8000,
         'task_tmpdir'        => @is_writable('/dev/shm/') ? '/dev/shm' : '/tmp',
-        'max_request'        => 3000,
+        'max_request'        => 8000,
         'open_tcp_nodelay'   => true,
         'pid_file'           => storage_path('laravels.pid'),
         'log_file'           => storage_path(sprintf('logs/swoole-%s.log', date('Y-m'))),
